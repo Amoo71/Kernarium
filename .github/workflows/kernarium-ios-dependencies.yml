@@ -1,0 +1,80 @@
+name: Kernarium iOS dependencies
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/kernarium-ios-dependencies.yml"
+      - "dependencies/**"
+      - "scripts/**"
+      - "Kernarium/scripts/**"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios-dependencies:
+    # The project requires an Apple Silicon host and the iOS 27 SDK.
+    runs-on: macos-26
+    timeout-minutes: 360
+    steps:
+      - name: Check out Kernarium
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Select latest stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install native build tools
+        run: |
+          brew update
+          brew install cmake ninja meson pkg-config rsync autoconf automake gettext libtool gperf groff bison flex python@3.12
+
+      - name: Install Python build modules
+        run: |
+          python3.12 -m pip install --user 'meson>=1.4' mako packaging pyyaml
+
+      - name: Verify Apple SDK and Metal toolchain
+        run: |
+          xcodebuild -version
+          xcodebuild -showsdks
+          xcodebuild -downloadComponent MetalToolchain
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Prepare pinned dependency sources
+        run: |
+          dependencies/prepare.sh --product apple-gpu-vulkan-experiment
+          dependencies/prepare.sh --product ios-network
+          dependencies/prepare.sh --product ios-storage
+          dependencies/prepare.sh --product ios-compression
+
+      - name: Build iOS GPU stack
+        env:
+          PATH: /opt/homebrew/opt/python@3.12/libexec/bin:/opt/homebrew/bin:/usr/bin:/bin
+        run: dependencies/build-apple-gpu.sh --platform ios
+
+      - name: Build iOS network stack
+        run: dependencies/build-ios-network.sh --platform ios
+
+      - name: Build storage and compression frameworks
+        run: |
+          dependencies/build-ios-storage.sh
+          dependencies/build-ios-zstd.sh
+
+      - name: Upload verified iOS dependency frameworks
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernarium-ios-dependencies
+          path: |
+            .build/dependencies/apple-gpu-vulkan-experiment/ios-device-arm64/
+            .build/dependencies/ios-device-arm64/network/
+            .build/dependencies/ios-storage/
+            .build/dependencies/ios-zstd/
+          if-no-files-found: error
+          compression-level: 1
+          retention-days: 7
